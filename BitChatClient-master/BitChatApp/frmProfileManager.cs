@@ -1,0 +1,353 @@
+﻿
+
+using BitChatCore;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Windows.Forms;
+
+namespace BitChatApp
+{
+    public partial class frmProfileManager : Form
+    {
+        #region variables
+
+        static bool _firstRunComplete = false;
+
+        bool _isPortableApp;
+        string _profileFolder;
+
+        BitChatProfile _profile;
+        string _profileFilePath;
+
+        #endregion
+
+        #region constructor
+
+        public frmProfileManager()
+        {
+            InitializeComponent();
+
+            RefreshProfileList();
+        }
+
+        #endregion
+
+        #region private
+
+        private void RefreshProfileList()
+        {
+            string[] profiles = Directory.GetFiles(Environment.CurrentDirectory, "*.profile", SearchOption.TopDirectoryOnly);
+
+            if (profiles.Length > 0)
+            {
+                _isPortableApp = true;
+                _profileFolder = Environment.CurrentDirectory;
+            }
+            else
+            {
+                _profileFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Technitium", "BitChat");
+
+                if (!Directory.Exists(_profileFolder))
+                    Directory.CreateDirectory(_profileFolder);
+
+                profiles = Directory.GetFiles(_profileFolder, "*.profile", SearchOption.TopDirectoryOnly);
+                _isPortableApp = false;
+            }
+
+            lstProfiles.Items.Clear();
+
+            foreach (string profile in profiles)
+            {
+                if (profile.EndsWith(".profile"))
+                {
+                    string profileName = Path.GetFileNameWithoutExtension(profile);
+
+                    if (!string.IsNullOrWhiteSpace(profileName))
+                        lstProfiles.Items.Add(profileName);
+                }
+            }
+
+            if (lstProfiles.Items.Count > 0)
+                lstProfiles.SelectedIndex = 0;
+        }
+
+        private void frmProfileManager_Load(object sender, EventArgs e)
+        {
+            if (_firstRunComplete)
+                return;
+
+            _firstRunComplete = true;
+
+            switch (lstProfiles.Items.Count)
+            {
+                case 0:
+                    using (frmWelcome frm = new frmWelcome(_isPortableApp, _profileFolder))
+                    {
+                        DialogResult result = frm.ShowDialog(this);
+
+                        switch (result)
+                        {
+                            case System.Windows.Forms.DialogResult.OK:
+                                _profile = frm.Profile;
+                                _profileFilePath = frm.ProfileFilePath;
+
+                                this.DialogResult = System.Windows.Forms.DialogResult.OK;
+                                this.Close();
+                                break;
+
+                            case System.Windows.Forms.DialogResult.Ignore:
+                                btnImportProfile_Click(null, null);
+                                break;
+
+                            default:
+                                this.DialogResult = System.Windows.Forms.DialogResult.Cancel;
+                                this.Close();
+                                break;
+                        }
+                    }
+                    break;
+
+                case 1:
+                    _profileFilePath = Path.Combine(_profileFolder, (lstProfiles.Items[0] as string) + ".profile");
+
+                    Start();
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        private void lstProfiles_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            btnStart.Enabled = (lstProfiles.SelectedItem != null);
+            btnReIssueProfile.Enabled = btnStart.Enabled;
+            btnDeleteProfile.Enabled = btnStart.Enabled;
+            btnExportProfile.Enabled = btnStart.Enabled;
+        }
+
+        private void lstProfiles_DoubleClick(object sender, EventArgs e)
+        {
+            if (lstProfiles.SelectedItem != null)
+                btnStart_Click(null, null);
+        }
+
+        private void btnStart_Click(object sender, EventArgs e)
+        {
+            _profileFilePath = Path.Combine(_profileFolder, (lstProfiles.SelectedItem as string) + ".profile");
+
+            Start();
+        }
+
+        private void btnExit_Click(object sender, EventArgs e)
+        {
+            this.DialogResult = System.Windows.Forms.DialogResult.Cancel;
+            this.Close();
+        }
+
+        private void btnNewProfile_Click(object sender, EventArgs e)
+        {
+            this.Hide();
+
+            using (frmRegister frm = new frmRegister(_isPortableApp, _profileFolder))
+            {
+                if (frm.ShowDialog(this) == System.Windows.Forms.DialogResult.OK)
+                {
+                    _profile = frm.Profile;
+                    _profileFilePath = frm.ProfileFilePath;
+
+                    string profileName = Path.GetFileNameWithoutExtension(_profileFilePath);
+
+                    lstProfiles.Items.Add(profileName);
+                    lstProfiles.SelectedItem = profileName;
+                }
+            }
+
+            RefreshProfileList();
+            this.Show();
+        }
+
+        private void btnReIssueProfile_Click(object sender, EventArgs e)
+        {
+            if (MessageBox.Show("Reissuing a profile certificate will allow you register again with the same email address and change your information in the profile certificate while keeping all your profile settings intact.\r\n\r\nAre you sure you want to reissue the selected profile?\r\n\r\nWARNING! This will revoke the previously issued profile certificate however, your settings will remain intact.", "Reissue Profile Certificate?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == System.Windows.Forms.DialogResult.Yes)
+            {
+                this.Hide();
+
+                _profileFilePath = Path.Combine(_profileFolder, (lstProfiles.SelectedItem as string) + ".profile");
+
+                using (frmPassword frm = new frmPassword(_profileFilePath, _isPortableApp, _profileFolder))
+                {
+                    if (frm.ShowDialog(this) == System.Windows.Forms.DialogResult.OK)
+                    {
+                        _profile = frm.Profile;
+
+                        using (frmRegister frmReg = new frmRegister(_profile, _profileFilePath, _isPortableApp, _profileFolder, true))
+                        {
+                            if (frmReg.ShowDialog(this) == System.Windows.Forms.DialogResult.OK)
+                            {
+                                _profile = frmReg.Profile;
+                                _profileFilePath = frmReg.ProfileFilePath;
+
+                                string profileName = Path.GetFileNameWithoutExtension(_profileFilePath);
+                                lstProfiles.SelectedItem = profileName;
+                            }
+                        }
+                    }
+                }
+
+                RefreshProfileList();
+                this.Show();
+            }
+        }
+
+        private void btnDeleteProfile_Click(object sender, EventArgs e)
+        {
+            if (MessageBox.Show("Are you sure you want to permanently delete selected profile?\r\n\r\nWarning! This will delete the profile file permanently and hence cannot be undone.", "Delete Profile Permanently?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == System.Windows.Forms.DialogResult.Yes)
+            {
+                List<string> toRemove = new List<string>();
+
+                foreach (string profile in lstProfiles.SelectedItems)
+                {
+                    try
+                    {
+                        File.Delete(Path.Combine(_profileFolder, profile + ".profile"));
+                        File.Delete(Path.Combine(_profileFolder, profile + ".profile.bak"));
+
+                        toRemove.Add(profile);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error! Cannot delete profile '" + profile + "' due to following error:\r\n\r\n" + ex.Message, "Error!", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+
+                foreach (string profile in toRemove)
+                    lstProfiles.Items.Remove(profile);
+            }
+        }
+
+        private void btnImportProfile_Click(object sender, EventArgs e)
+        {
+            using (OpenFileDialog oFD = new OpenFileDialog())
+            {
+                oFD.Filter = "Bit Chat Profile File (*.profile)|*.profile";
+                oFD.Title = "Import Bit Chat Profile File...";
+                oFD.CheckFileExists = true;
+                oFD.Multiselect = false;
+
+                if (oFD.ShowDialog(this) == System.Windows.Forms.DialogResult.OK)
+                {
+                    try
+                    {
+                        string profileName = Path.GetFileNameWithoutExtension(oFD.FileName);
+
+                        File.Copy(oFD.FileName, Path.Combine(_profileFolder, profileName + ".profile"));
+
+                        lstProfiles.Items.Add(profileName);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error! Cannot import profile due to following error:\r\n\r\n" + ex.Message, "Error!", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void btnExportProfile_Click(object sender, EventArgs e)
+        {
+            using (SaveFileDialog sFD = new SaveFileDialog())
+            {
+                sFD.Title = "Export Bit Chat Profile File As...";
+                sFD.Filter = "Bit Chat Profile File (*.profile)|*.profile";
+                sFD.DefaultExt = ".profile";
+                sFD.FileName = lstProfiles.SelectedItem + ".profile";
+                sFD.CheckPathExists = true;
+                sFD.OverwritePrompt = true;
+
+                if (sFD.ShowDialog(this) == System.Windows.Forms.DialogResult.OK)
+                {
+                    try
+                    {
+                        File.Copy(Path.Combine(_profileFolder, lstProfiles.SelectedItem + ".profile"), sFD.FileName, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error! Cannot export profile due to following error:\r\n\r\n" + ex.Message, "Error!", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                }
+            }
+        }
+
+        private void frmProfileManager_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete)
+                btnDeleteProfile_Click(null, null);
+        }
+
+        private void Start()
+        {
+            using (frmPassword frm = new frmPassword(_profileFilePath, _isPortableApp, _profileFolder))
+            {
+                switch (frm.ShowDialog(this))
+                {
+                    case DialogResult.OK:
+                        _profile = frm.Profile;
+
+                        if (_profile.LocalCertificateStore.Certificate.Type == TechnitiumLibrary.Security.Cryptography.CertificateType.User)
+                        {
+                            //check for profile certificate expiry
+                            double daysToExpire = (_profile.LocalCertificateStore.Certificate.ExpiresOnUTC - DateTime.UtcNow).TotalDays;
+
+                            if (daysToExpire < 0.0)
+                            {
+                                //cert already expired
+
+                                if (MessageBox.Show("Your profile certificate '" + _profile.LocalCertificateStore.Certificate.SerialNumber + "' issued to '" + _profile.LocalCertificateStore.Certificate.IssuedTo.EmailAddress.Address + "' has expired on " + _profile.LocalCertificateStore.Certificate.ExpiresOnUTC.ToString() + ".\r\n\r\nDo you want to reissue the certificate now?", "Profile Certificate Expired! Reissue Now?", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == System.Windows.Forms.DialogResult.Yes)
+                                {
+                                    btnReIssueProfile_Click(null, null);
+                                }
+
+                                return;
+                            }
+                            else if (daysToExpire < 30.0)
+                            {
+                                //cert to expire in 30 days
+                                if (MessageBox.Show("Your profile certificate '" + _profile.LocalCertificateStore.Certificate.SerialNumber + "' issued to '" + _profile.LocalCertificateStore.Certificate.IssuedTo.EmailAddress.Address + "' will expire in " + Convert.ToInt32(daysToExpire) + " days on " + _profile.LocalCertificateStore.Certificate.ExpiresOnUTC.ToString() + ".\r\n\r\nDo you want to reissue the certificate now?", "Profile Certificate About To Expire! Reissue Now?", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation) == System.Windows.Forms.DialogResult.Yes)
+                                {
+                                    btnReIssueProfile_Click(null, null);
+                                    return;
+                                }
+                            }
+                        }
+
+                        this.DialogResult = DialogResult.OK;
+                        this.Close();
+                        break;
+
+                    case DialogResult.Yes:
+                        btnNewProfile_Click(null, null);
+                        break;
+                }
+            }
+        }
+
+        #endregion
+
+        #region properties
+
+        public bool IsPortableApp
+        { get { return _isPortableApp; } }
+
+        public string ProfileFolder
+        { get { return _profileFolder; } }
+
+        public BitChatProfile Profile
+        { get { return _profile; } }
+
+        public string ProfileFilePath
+        { get { return _profileFilePath; } }
+
+        #endregion
+    }
+}
